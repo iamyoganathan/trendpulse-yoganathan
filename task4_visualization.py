@@ -1,124 +1,194 @@
-import argparse
 import os
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
 
-DATA_DIR = "data"
+DATA_FILE = os.path.join("data", "trends_analysed.csv")
+OUTPUT_DIR = "outputs"
+CHART1_FILE = os.path.join(OUTPUT_DIR, "chart1_top_stories.png")
+CHART2_FILE = os.path.join(OUTPUT_DIR, "chart2_categories.png")
+CHART3_FILE = os.path.join(OUTPUT_DIR, "chart3_scatter.png")
+DASHBOARD_FILE = os.path.join(OUTPUT_DIR, "dashboard.png")
 
 
-def find_latest_summary_csv(data_dir=DATA_DIR):
-    """Return the newest analysis summary CSV file in the data folder."""
-    if not os.path.isdir(data_dir):
-        return None
-
-    candidates = []
-    for name in os.listdir(data_dir):
-        if name.startswith("analysis_summary_") and name.endswith(".csv"):
-            candidates.append(os.path.join(data_dir, name))
-
-    if not candidates:
-        return None
-
-    return max(candidates, key=os.path.getmtime)
+def load_data(csv_path):
+    """Load the analysed CSV from Task 3."""
+    return pd.read_csv(csv_path)
 
 
-def load_summary(csv_path):
-    """Load the analysis summary into a DataFrame."""
-    df = pd.read_csv(csv_path)
-
-    required_columns = {
-        "category",
-        "story_count",
-        "avg_score",
-        "median_score",
-        "max_score",
-        "avg_comments",
-        "total_comments",
-        "unique_authors",
-        "story_share_pct",
-    }
-    missing = required_columns - set(df.columns)
-    if missing:
-        raise ValueError(f"Missing required columns: {sorted(missing)}")
-
-    return df
+def ensure_outputs_folder():
+    """Create the outputs folder if it does not already exist."""
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
-def create_visualization(df, output_path):
-    """Build a compact dashboard with the key category metrics."""
-    os.makedirs(DATA_DIR, exist_ok=True)
+def shorten_title(title, max_length=50):
+    """Trim long story titles so the charts stay readable."""
+    text = str(title).strip()
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3].rstrip() + "..."
 
-    frame = df.copy()
-    frame = frame.sort_values(by=["story_count", "avg_score", "category"], ascending=[False, False, True])
 
-    categories = frame["category"].tolist()
-    colors = ["#2458A6", "#2D7DD2", "#3AB795", "#F4A259", "#E76F51"]
+def style_axes(axis):
+    """Apply a simple, consistent grid style to an axis."""
+    axis.grid(axis="x", linestyle="--", alpha=0.25)
 
-    plt.style.use("seaborn-v0_8-whitegrid")
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6), constrained_layout=True)
-    fig.suptitle("TrendPulse: What is Trending Right Now", fontsize=20, fontweight="bold")
 
-    # Story count chart.
-    axes[0].bar(categories, frame["story_count"], color=colors[: len(categories)])
-    axes[0].set_title("Stories per Category")
-    axes[0].set_ylabel("Story Count")
-    axes[0].tick_params(axis="x", rotation=25)
+def save_figure(fig, output_path):
+    """Save a figure before any display call."""
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
 
-    # Average score chart.
-    axes[1].bar(categories, frame["avg_score"], color=colors[: len(categories)])
-    axes[1].set_title("Average Score")
-    axes[1].set_ylabel("Average Score")
-    axes[1].tick_params(axis="x", rotation=25)
 
-    # Share of total stories chart.
-    axes[2].pie(
-        frame["story_share_pct"],
-        labels=categories,
-        autopct="%1.1f%%",
-        startangle=90,
-        colors=colors[: len(categories)],
-        textprops={"fontsize": 10},
-    )
-    axes[2].set_title("Share of Collected Stories")
+def create_chart1(frame, output_path):
+    """Create a horizontal bar chart for the top 10 stories by score."""
+    top_stories = frame.nlargest(10, "score").copy()
+    top_stories = top_stories.sort_values("score", ascending=True)
+    top_stories["short_title"] = top_stories["title"].apply(shorten_title)
 
-    fig.patch.set_facecolor("white")
-    plt.savefig(output_path, dpi=200, bbox_inches="tight")
+    fig, axis = plt.subplots(figsize=(12, 7))
+    axis.barh(top_stories["short_title"], top_stories["score"], color="#2D7DD2")
+    axis.set_title("Top 10 Stories by Score")
+    axis.set_xlabel("Score")
+    axis.set_ylabel("Story Title")
+    axis.invert_yaxis()
+    style_axes(axis)
+
+    save_figure(fig, output_path)
     plt.close(fig)
 
 
-def parse_args():
-    """Parse optional command-line arguments."""
-    parser = argparse.ArgumentParser(description="Visualize TrendPulse analysis results.")
-    parser.add_argument("csv_path", nargs="?", help="Path to the analysis summary CSV file.")
-    parser.add_argument("--output", help="Optional output PNG path.")
-    return parser.parse_args()
+def create_chart2(frame, output_path):
+    """Create a category bar chart with a different colour for each bar."""
+    category_counts = frame["category"].value_counts().reindex(
+        ["technology", "worldnews", "sports", "science", "entertainment"]
+    )
+    category_counts = category_counts.dropna()
+
+    colours = ["#2458A6", "#2D7DD2", "#3AB795", "#F4A259", "#E76F51"]
+
+    fig, axis = plt.subplots(figsize=(10, 6))
+    axis.bar(category_counts.index, category_counts.values, color=colours[: len(category_counts)])
+    axis.set_title("Stories per Category")
+    axis.set_xlabel("Category")
+    axis.set_ylabel("Number of Stories")
+    axis.tick_params(axis="x", rotation=20)
+    style_axes(axis)
+
+    save_figure(fig, output_path)
+    plt.close(fig)
+
+
+def create_chart3(frame, output_path):
+    """Create a scatter plot showing score versus comments."""
+    fig, axis = plt.subplots(figsize=(10, 6))
+
+    popular = frame[frame["is_popular"] == True]  # noqa: E712
+    not_popular = frame[frame["is_popular"] == False]  # noqa: E712
+
+    axis.scatter(
+        not_popular["score"],
+        not_popular["num_comments"],
+        alpha=0.7,
+        label="Non-popular",
+        color="#E76F51",
+    )
+    axis.scatter(
+        popular["score"],
+        popular["num_comments"],
+        alpha=0.8,
+        label="Popular",
+        color="#2D7DD2",
+    )
+    axis.set_title("Score vs Comments")
+    axis.set_xlabel("Score")
+    axis.set_ylabel("Number of Comments")
+    axis.legend()
+    style_axes(axis)
+
+    save_figure(fig, output_path)
+    plt.close(fig)
+
+
+def create_dashboard(frame, output_path):
+    """Combine all three charts into one dashboard figure."""
+    top_stories = frame.nlargest(10, "score").copy()
+    top_stories = top_stories.sort_values("score", ascending=True)
+    top_stories["short_title"] = top_stories["title"].apply(shorten_title)
+
+    category_counts = frame["category"].value_counts().reindex(
+        ["technology", "worldnews", "sports", "science", "entertainment"]
+    ).dropna()
+
+    popular = frame[frame["is_popular"] == True]  # noqa: E712
+    not_popular = frame[frame["is_popular"] == False]  # noqa: E712
+
+    fig, axes = plt.subplots(1, 3, figsize=(22, 7), constrained_layout=True)
+    fig.suptitle("TrendPulse Dashboard", fontsize=22, fontweight="bold")
+
+    axes[0].barh(top_stories["short_title"], top_stories["score"], color="#2D7DD2")
+    axes[0].set_title("Top 10 Stories by Score")
+    axes[0].set_xlabel("Score")
+    axes[0].set_ylabel("Story Title")
+    axes[0].invert_yaxis()
+    style_axes(axes[0])
+
+    category_colours = ["#2458A6", "#2D7DD2", "#3AB795", "#F4A259", "#E76F51"]
+    axes[1].bar(category_counts.index, category_counts.values, color=category_colours[: len(category_counts)])
+    axes[1].set_title("Stories per Category")
+    axes[1].set_xlabel("Category")
+    axes[1].set_ylabel("Number of Stories")
+    axes[1].tick_params(axis="x", rotation=20)
+    style_axes(axes[1])
+
+    axes[2].scatter(
+        not_popular["score"],
+        not_popular["num_comments"],
+        alpha=0.7,
+        label="Non-popular",
+        color="#E76F51",
+    )
+    axes[2].scatter(
+        popular["score"],
+        popular["num_comments"],
+        alpha=0.8,
+        label="Popular",
+        color="#2D7DD2",
+    )
+    axes[2].set_title("Score vs Comments")
+    axes[2].set_xlabel("Score")
+    axes[2].set_ylabel("Number of Comments")
+    axes[2].legend()
+    style_axes(axes[2])
+
+    save_figure(fig, output_path)
+    plt.close(fig)
 
 
 def main():
-    args = parse_args()
-
-    csv_path = args.csv_path or find_latest_summary_csv()
-    if not csv_path:
-        print("No analysis summary CSV file found in the data folder.")
+    if not os.path.exists(DATA_FILE):
+        print(f"Missing input file: {DATA_FILE}")
         return
 
-    try:
-        summary_df = load_summary(csv_path)
-    except (OSError, ValueError, pd.errors.EmptyDataError) as exc:
-        print(f"Failed to load analysis summary: {exc}")
-        return
+    ensure_outputs_folder()
+    data = load_data(DATA_FILE)
 
-    output_path = args.output
-    if not output_path:
-        base_name = os.path.splitext(os.path.basename(csv_path))[0]
-        suffix = base_name.replace("analysis_summary_", "")
-        output_path = os.path.join(DATA_DIR, f"trendpulse_visualization_{suffix}.png")
+    # Normalize the columns so plotting stays predictable.
+    data["title"] = data["title"].astype("string").str.strip()
+    data["category"] = data["category"].astype("string").str.strip().str.lower()
+    data["score"] = pd.to_numeric(data["score"], errors="coerce").fillna(0)
+    data["num_comments"] = pd.to_numeric(data["num_comments"], errors="coerce").fillna(0)
+    data["is_popular"] = data["is_popular"].astype(str).str.lower().isin(["true", "1", "yes"])
 
-    create_visualization(summary_df, output_path)
+    create_chart1(data, CHART1_FILE)
+    create_chart2(data, CHART2_FILE)
+    create_chart3(data, CHART3_FILE)
+    create_dashboard(data, DASHBOARD_FILE)
 
-    print(f"Saved visualization to {output_path}")
+    print(f"Saved {CHART1_FILE}")
+    print(f"Saved {CHART2_FILE}")
+    print(f"Saved {CHART3_FILE}")
+    print(f"Saved {DASHBOARD_FILE}")
 
 
 if __name__ == "__main__":

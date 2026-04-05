@@ -1,172 +1,96 @@
-import argparse
-import json
 import os
-from datetime import datetime
 
 import numpy as np
 import pandas as pd
 
 
 DATA_DIR = "data"
-
-
-def find_latest_cleaned_csv(data_dir=DATA_DIR):
-    """Return the newest cleaned CSV file in the data folder."""
-    if not os.path.isdir(data_dir):
-        return None
-
-    candidates = []
-    for name in os.listdir(data_dir):
-        if name.startswith("cleaned_trends_") and name.endswith(".csv"):
-            candidates.append(os.path.join(data_dir, name))
-
-    if not candidates:
-        return None
-
-    return max(candidates, key=os.path.getmtime)
+INPUT_FILE = os.path.join(DATA_DIR, "trends_clean.csv")
+OUTPUT_FILE = os.path.join(DATA_DIR, "trends_analysed.csv")
 
 
 def load_data(csv_path):
-    """Load the cleaned CSV into a pandas DataFrame."""
-    df = pd.read_csv(csv_path)
-
-    required_columns = {
-        "post_id",
-        "title",
-        "category",
-        "score",
-        "num_comments",
-        "author",
-        "collected_at",
-    }
-    missing = required_columns - set(df.columns)
-    if missing:
-        raise ValueError(f"Missing required columns: {sorted(missing)}")
-
-    return df
+    """Load the cleaned CSV from Task 2 into a DataFrame."""
+    return pd.read_csv(csv_path)
 
 
-def clean_dataframe(df):
-    """Apply final analysis-ready cleaning and type conversion."""
-    frame = df.copy()
-
-    frame["category"] = frame["category"].astype(str).str.strip().str.lower()
-    frame["title"] = frame["title"].astype(str).str.strip()
-    frame["author"] = frame["author"].astype(str).str.strip()
-    frame["collected_at"] = frame["collected_at"].astype(str).str.strip()
-
-    frame["score"] = pd.to_numeric(frame["score"], errors="coerce").fillna(0).astype(int)
-    frame["num_comments"] = pd.to_numeric(frame["num_comments"], errors="coerce").fillna(0).astype(int)
-    frame["post_id"] = pd.to_numeric(frame["post_id"], errors="coerce").astype("Int64")
-
-    frame = frame.dropna(subset=["post_id", "title", "category"])
-    frame = frame.drop_duplicates(subset=["post_id"]).reset_index(drop=True)
-
-    return frame
+def print_overview(frame):
+    """Print the basic exploration details required by the assignment."""
+    print(f"Loaded data: {frame.shape}")
+    print()
+    print("First 5 rows:")
+    print(frame.head())
+    print()
+    print(f"Average score   : {frame['score'].mean():.2f}")
+    print(f"Average comments: {frame['num_comments'].mean():.2f}")
 
 
-def build_category_summary(df):
-    """Compute category-level metrics for reporting and visualization."""
-    grouped = df.groupby("category", dropna=False)
+def print_numpy_stats(frame):
+    """Use NumPy to calculate the requested statistics."""
+    scores = frame["score"].to_numpy()
+    comments = frame["num_comments"].to_numpy()
 
-    summary = grouped.agg(
-        story_count=("post_id", "count"),
-        avg_score=("score", "mean"),
-        median_score=("score", "median"),
-        max_score=("score", "max"),
-        avg_comments=("num_comments", "mean"),
-        total_comments=("num_comments", "sum"),
-        unique_authors=("author", "nunique"),
-    ).reset_index()
+    most_story_category = frame["category"].value_counts().idxmax()
+    most_story_count = int(frame["category"].value_counts().max())
 
-    total_stories = len(df)
-    summary["story_share_pct"] = np.where(
-        total_stories > 0,
-        (summary["story_count"] / total_stories) * 100,
-        0,
-    )
-    summary["avg_score"] = summary["avg_score"].round(2)
-    summary["median_score"] = summary["median_score"].round(2)
-    summary["avg_comments"] = summary["avg_comments"].round(2)
-    summary["story_share_pct"] = summary["story_share_pct"].round(2)
+    top_comment_index = int(np.argmax(comments))
+    top_comment_title = frame.iloc[top_comment_index]["title"]
+    top_comment_count = int(comments[top_comment_index])
 
-    # Sort highest-volume categories first so the charting step has an intuitive order.
-    summary = summary.sort_values(by=["story_count", "avg_score", "category"], ascending=[False, False, True])
-    return summary
+    print("--- NumPy Stats ---")
+    print(f"Mean score   : {np.mean(scores):.2f}")
+    print(f"Median score : {np.median(scores):.2f}")
+    print(f"Std deviation: {np.std(scores):.2f}")
+    print(f"Max score    : {np.max(scores):.0f}")
+    print(f"Min score    : {np.min(scores):.0f}")
+    print()
+    print(f"Most stories in: {most_story_category} ({most_story_count} stories)")
+    print()
+    print(f'Most commented story: "{top_comment_title}"  — {top_comment_count} comments')
 
 
-def build_overall_metrics(df):
-    """Build a compact JSON-friendly report for the whole dataset."""
-    return {
-        "total_stories": int(len(df)),
-        "unique_categories": int(df["category"].nunique()),
-        "unique_authors": int(df["author"].nunique()),
-        "average_score": round(float(df["score"].mean()), 2) if len(df) else 0.0,
-        "average_comments": round(float(df["num_comments"].mean()), 2) if len(df) else 0.0,
-        "max_score": int(df["score"].max()) if len(df) else 0,
-        "min_score": int(df["score"].min()) if len(df) else 0,
-        "top_category": str(df.groupby("category").size().idxmax()) if len(df) else "",
-    }
+def add_columns(frame):
+    """Add the engagement and is_popular columns."""
+    enriched = frame.copy()
+    average_score = enriched["score"].mean()
+
+    # Engagement shows how much discussion a story gets per upvote.
+    enriched["engagement"] = enriched["num_comments"] / (enriched["score"] + 1)
+
+    # Popular stories are those scoring above the overall average.
+    enriched["is_popular"] = enriched["score"] > average_score
+
+    return enriched
 
 
-def build_output_paths(input_csv_path):
-    """Create date-stamped output paths that match the source file."""
-    base_name = os.path.splitext(os.path.basename(input_csv_path))[0]
-    suffix = base_name.replace("cleaned_trends_", "")
-    summary_csv = os.path.join(DATA_DIR, f"analysis_summary_{suffix}.csv")
-    summary_json = os.path.join(DATA_DIR, f"analysis_summary_{suffix}.json")
-    return summary_csv, summary_json
-
-
-def save_outputs(category_summary, overall_metrics, csv_path, json_path):
-    """Write the summary tables and metrics to disk."""
+def save_result(frame, csv_path):
+    """Save the updated DataFrame to the Task 3 output CSV."""
     os.makedirs(DATA_DIR, exist_ok=True)
-
-    category_summary.to_csv(csv_path, index=False)
-
-    report = {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "overall_metrics": overall_metrics,
-        "category_summary": category_summary.to_dict(orient="records"),
-    }
-    with open(json_path, "w", encoding="utf-8") as file:
-        json.dump(report, file, indent=2, ensure_ascii=False)
-
-
-def parse_args():
-    """Parse optional command-line arguments."""
-    parser = argparse.ArgumentParser(description="Analyze cleaned TrendPulse data with pandas and NumPy.")
-    parser.add_argument("csv_path", nargs="?", help="Path to the cleaned trends CSV file.")
-    parser.add_argument("--csv-output", help="Optional output path for the summary CSV.")
-    parser.add_argument("--json-output", help="Optional output path for the summary JSON.")
-    return parser.parse_args()
+    frame.to_csv(csv_path, index=False)
 
 
 def main():
-    args = parse_args()
-
-    csv_path = args.csv_path or find_latest_cleaned_csv()
-    if not csv_path:
-        print("No cleaned CSV file found in the data folder.")
+    if not os.path.exists(INPUT_FILE):
+        print(f"Missing input file: {INPUT_FILE}")
         return
 
-    try:
-        raw_df = load_data(csv_path)
-    except (OSError, ValueError, pd.errors.EmptyDataError) as exc:
-        print(f"Failed to load CSV data: {exc}")
-        return
+    data = load_data(INPUT_FILE)
 
-    cleaned_df = clean_dataframe(raw_df)
-    category_summary = build_category_summary(cleaned_df)
-    overall_metrics = build_overall_metrics(cleaned_df)
+    # Normalize the important fields so the statistics and comparisons are reliable.
+    data["title"] = data["title"].astype("string").str.strip()
+    data["category"] = data["category"].astype("string").str.strip().str.lower()
+    data["score"] = pd.to_numeric(data["score"], errors="coerce").fillna(0).astype(int)
+    data["num_comments"] = pd.to_numeric(data["num_comments"], errors="coerce").fillna(0).astype(int)
 
-    summary_csv, summary_json = build_output_paths(csv_path)
-    summary_csv = args.csv_output or summary_csv
-    summary_json = args.json_output or summary_json
+    print_overview(data)
+    print()
+    print_numpy_stats(data)
 
-    save_outputs(category_summary, overall_metrics, summary_csv, summary_json)
+    analysed = add_columns(data)
+    save_result(analysed, OUTPUT_FILE)
 
-    print(f"Analyzed {len(cleaned_df)} stories. Saved to {summary_csv} and {summary_json}")
+    print()
+    print(f"Saved to {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":

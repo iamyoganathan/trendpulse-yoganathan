@@ -1,10 +1,11 @@
-import argparse
-import csv
-import json
 import os
+
+import pandas as pd
 
 
 DATA_DIR = "data"
+OUTPUT_FILE = os.path.join(DATA_DIR, "trends_clean.csv")
+CATEGORY_ORDER = ["technology", "worldnews", "sports", "science", "entertainment"]
 
 
 def find_latest_json_file(data_dir=DATA_DIR):
@@ -23,129 +24,79 @@ def find_latest_json_file(data_dir=DATA_DIR):
     return max(candidates, key=os.path.getmtime)
 
 
-def load_json_records(json_path):
-    """Load the collected trend stories from JSON."""
-    with open(json_path, "r", encoding="utf-8") as file:
-        data = json.load(file)
-
-    if not isinstance(data, list):
-        raise ValueError("Expected a JSON array of records.")
-
-    return data
+def load_json_dataframe(json_path):
+    """Load the collected trend stories into a pandas DataFrame."""
+    return pd.read_json(json_path)
 
 
-def clean_record(record):
-    """Normalize a single record and keep only the required CSV fields."""
-    post_id = record.get("post_id")
-    title = str(record.get("title", "")).strip()
-    category = str(record.get("category", "")).strip().lower()
-    score = record.get("score", 0)
-    num_comments = record.get("num_comments", 0)
-    author = str(record.get("author", "")).strip()
-    collected_at = str(record.get("collected_at", "")).strip()
+def clean_dataframe(frame):
+    """Apply the assignment cleaning rules step by step."""
+    cleaned = frame.copy()
 
-    if post_id is None or not title or not category:
-        return None
+    cleaned["title"] = cleaned["title"].astype("string").str.strip()
+    cleaned["score"] = pd.to_numeric(cleaned["score"], errors="coerce")
+    cleaned["num_comments"] = pd.to_numeric(cleaned["num_comments"], errors="coerce")
+    cleaned["post_id"] = pd.to_numeric(cleaned["post_id"], errors="coerce")
 
-    try:
-        post_id = int(post_id)
-    except (TypeError, ValueError):
-        return None
+    cleaned = cleaned.drop_duplicates(subset=["post_id"], keep="first")
+    after_duplicates = len(cleaned)
 
-    try:
-        score = int(score)
-    except (TypeError, ValueError):
-        score = 0
+    cleaned = cleaned.dropna(subset=["post_id", "title", "score"])
+    after_nulls = len(cleaned)
 
-    try:
-        num_comments = int(num_comments)
-    except (TypeError, ValueError):
-        num_comments = 0
+    cleaned = cleaned[cleaned["score"] >= 5]
+    after_low_scores = len(cleaned)
 
-    return {
-        "post_id": post_id,
-        "title": title,
-        "category": category,
-        "score": score,
-        "num_comments": num_comments,
-        "author": author,
-        "collected_at": collected_at,
-    }
+    cleaned["post_id"] = cleaned["post_id"].astype(int)
+    cleaned["score"] = cleaned["score"].astype(int)
+    cleaned["num_comments"] = cleaned["num_comments"].fillna(0).astype(int)
+
+    cleaned = cleaned.sort_values(by=["category", "score", "post_id"], ascending=[True, False, True])
+    cleaned = cleaned.reset_index(drop=True)
+
+    return cleaned, after_duplicates, after_nulls, after_low_scores
 
 
-def clean_records(records):
-    """Remove invalid rows and standardize values while keeping category-level rows intact."""
-    cleaned = []
-
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-
-        cleaned_record = clean_record(record)
-        if cleaned_record is None:
-            continue
-        cleaned.append(cleaned_record)
-
-    # Keep the output stable and easy to inspect.
-    cleaned.sort(key=lambda item: (item["category"], -item["score"], item["post_id"]))
-    return cleaned
-
-
-def build_output_path(input_json_path):
-    """Create a CSV name that matches the source file date."""
-    base_name = os.path.splitext(os.path.basename(input_json_path))[0]
-    suffix = base_name.replace("trends_", "")
-    return os.path.join(DATA_DIR, f"cleaned_trends_{suffix}.csv")
-
-
-def save_to_csv(records, csv_path):
-    """Write cleaned records to CSV in the data folder."""
+def save_to_csv(frame, csv_path):
+    """Write the cleaned DataFrame to CSV in the data folder."""
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    fieldnames = [
-        "post_id",
-        "title",
-        "category",
-        "score",
-        "num_comments",
-        "author",
-        "collected_at",
-    ]
-
-    with open(csv_path, "w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(records)
+    frame.to_csv(csv_path, index=False)
 
 
-def parse_args():
-    """Parse optional input and output paths from the command line."""
-    parser = argparse.ArgumentParser(description="Clean TrendPulse JSON data and save it as CSV.")
-    parser.add_argument("json_path", nargs="?", help="Path to the input trends JSON file.")
-    parser.add_argument("--output", help="Optional output CSV path.")
-    return parser.parse_args()
+def print_category_summary(frame):
+    """Print a quick story count by category."""
+    print("\nStories per category:")
+    counts = frame["category"].value_counts()
+    for category in CATEGORY_ORDER:
+        if category in counts:
+            print(f"  {category:<16}{counts[category]}")
 
 
 def main():
-    args = parse_args()
-
-    json_path = args.json_path or find_latest_json_file()
+    json_path = find_latest_json_file()
     if not json_path:
         print("No trends JSON file found in the data folder.")
         return
 
     try:
-        raw_records = load_json_records(json_path)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raw_frame = load_json_dataframe(json_path)
+    except (OSError, ValueError, pd.errors.EmptyDataError) as exc:
         print(f"Failed to load JSON data: {exc}")
         return
 
-    cleaned_records = clean_records(raw_records)
+    print(f"Loaded {len(raw_frame)} stories from {json_path}")
 
-    output_path = args.output or build_output_path(json_path)
-    save_to_csv(cleaned_records, output_path)
+    cleaned_frame, after_duplicates, after_nulls, after_low_scores = clean_dataframe(raw_frame)
 
-    print(f"Cleaned {len(cleaned_records)} stories. Saved to {output_path}")
+    print(f"After removing duplicates: {after_duplicates}")
+    print(f"After removing nulls: {after_nulls}")
+    print(f"After removing low scores: {after_low_scores}")
+
+    save_to_csv(cleaned_frame, OUTPUT_FILE)
+
+    print(f"\nSaved {len(cleaned_frame)} rows to {OUTPUT_FILE}")
+    print_category_summary(cleaned_frame)
 
 
 if __name__ == "__main__":

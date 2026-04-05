@@ -5,9 +5,9 @@ TrendPulse is a 4-part Python data pipeline that fetches trending stories from t
 ## Project Files
 
 - `task1_data_collection.py` - fetches Hacker News top stories, assigns categories, and saves JSON output
-- `task2_data_processing.py` - loads the JSON file, cleans the records, and saves a CSV file
-- `task3_analysis.py` - analyzes the cleaned CSV and writes category summary outputs
-- `task4_visualization.py` - creates a chart dashboard from the analysis summary
+- `task2_data_processing.py` - loads the JSON file, cleans the records, and saves `data/trends_clean.csv`
+- `task3_analysis.py` - analyzes the cleaned CSV and saves `data/trends_analysed.csv`
+- `task4_visualization.py` - creates three charts and a dashboard from the analysed CSV
 
 ## Requirements
 
@@ -36,10 +36,12 @@ python task4_visualization.py
 The pipeline writes its results into the `data/` folder:
 
 - `data/trends_YYYYMMDD.json`
-- `data/cleaned_trends_YYYYMMDD.csv`
-- `data/analysis_summary_YYYYMMDD.csv`
-- `data/analysis_summary_YYYYMMDD.json`
-- `data/trendpulse_visualization_YYYYMMDD.png`
+- `data/trends_clean.csv`
+- `data/trends_analysed.csv`
+- `outputs/chart1_top_stories.png`
+- `outputs/chart2_categories.png`
+- `outputs/chart3_scatter.png`
+- `outputs/dashboard.png`
 
 ## What Task 1 Does
 
@@ -64,7 +66,7 @@ The pipeline writes its results into the `data/` folder:
 
 - The scripts are designed to keep running even if individual API requests fail.
 - Task 1 and Task 2 are tolerant of missing or malformed records.
-- Task 4 uses the analysis summary produced by Task 3.
+- Task 4 uses the analysed CSV produced by Task 3.
 
 ## Submission
 
